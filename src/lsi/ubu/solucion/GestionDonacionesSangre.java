@@ -43,31 +43,38 @@ public class GestionDonacionesSangre {
 		
 		PoolDeConexiones pool = PoolDeConexiones.getInstance();
 		Connection con=null;
-		PreparedStatement stDonante = null;
-		PreparedStatement stHospital = null;
-		PreparedStatement stUltimaDonacion = null;
-		PreparedStatement stInsertDonacion = null;
-		PreparedStatement stUpdateReserva = null;
+		
+		//Sentencias preparadas para las operaciones de sql
+		PreparedStatement stDonante = null; //Buscaar donante por nif
+		PreparedStatement stHospital = null; //Buscar reserva del hospital
+		PreparedStatement stUltimaDonacion = null; //Comprobar donaciones recientes
+		PreparedStatement stInsertDonacion = null; //Insertar nueva donacion
+		PreparedStatement stUpdateReserva = null; //Actualizar reserva hospital
+		
+		//ResultSets para guardar los resultados de las consultas
 		ResultSet rsDonante = null;
 		ResultSet rsHospital = null;
 		ResultSet rsUltimaDonacion = null;		
 
-	
 		try{
 			con = pool.getConnection();
-			//Comprobar que la cantidad está entre los valores correctos
+			
+			//Comprobar que la cantidad está entre 0 y 0.45
 			if(m_Cantidad <= 0 || m_Cantidad > 0.45) {
 				throw new GestionDonacionesSangreException(GestionDonacionesSangreException.VALOR_CANTIDAD_DONACION_INCORRECTO);
 
 			}
 			
-			//Comprobar que el donante existe y se obtiene su tipo de sangre
+			//Comprobar que el donante existe y obtener su tipo de sangre para poder después actualizar la reserva del hospital
 			stDonante = con.prepareStatement("select id_tipo_sangre from donante where nif = ?");
 			stDonante.setString(1, m_NIF);
 			rsDonante = stDonante.executeQuery();
+		
+			//Si no hay nignuna fila, el donante no existe
 			if(!rsDonante.next()) {
 				throw new GestionDonacionesSangreException(GestionDonacionesSangreException.DONANTE_NO_EXISTE);
 			}
+			//Guardamos el tipo de sangre del donante para usarlo después
 			int idTipoSangre = rsDonante.getInt("id_tipo_sangre");
 			
 			//Comprobar que existe el hospital y tiene reserva de ese tipo de sangre
@@ -83,7 +90,8 @@ public class GestionDonacionesSangre {
 			}
 			
 			//Comprobar que la ultima donacion ha sido hace mas de 15 dias
-			stUltimaDonacion = con.prepareStatement("select count * from donacion where nif_donante = ?" +
+			//Se cuentan cuantas donaciones tiene el donante en los ultimos 15 dias con respecto a la fecha pasada por parámetro
+			stUltimaDonacion = con.prepareStatement("select count (*) from donacion where nif_donante = ?" +
 					"and fecha_donacion > ? - 15");
 			stUltimaDonacion.setString(1, m_NIF);
 			stUltimaDonacion.setDate(2,  new java.sql.Date(m_Fecha_Donacion.getTime()));//Conversion de fecha a sql.date
@@ -95,6 +103,7 @@ public class GestionDonacionesSangre {
 			}
 			
 			//Insertar la donación
+			//Usamos la secuencia seq_donacion para generar el id y lo insertamos junto con los demas campos
 			stInsertDonacion = con.prepareStatement("insert into donacion values (seq_donacion.nextval, ?, ?, ?)");
 			stInsertDonacion.setString(1, m_NIF);
 			stInsertDonacion.setFloat(2,  m_Cantidad);
@@ -102,6 +111,8 @@ public class GestionDonacionesSangre {
 			stInsertDonacion.executeUpdate();
 			
 			//Actualizar la reserva del hospital
+			//Incrementando la cantidad de sangre en el hospital a la reserva actual, filtrando por hospital
+			//y tipo de sangre
 			stUpdateReserva = con.prepareStatement("update reserva_hospital set cantidad = cantidad + ? " +
 			"where id_hospital = ? and id_tipo_sangre = ?");
 			stUpdateReserva.setFloat(1,  m_Cantidad);
@@ -111,14 +122,23 @@ public class GestionDonacionesSangre {
 			
 			con.commit(); //Commit de los cambios si no ha habido excepciones
 			
+			//Excepción, se revierten los cambios y se relanza para que el método que hizo la llamada pueda tratarla
+		} catch (GestionDonacionesSangreException e) {
+			if (con != null) {
+				con.rollback();
+				throw e;
+			}
+		
+			//Si salta excepción de SQL se revierten los cambios, se registra en el logger y se relanza
 		} catch (SQLException e) {
 			if (con != null) {
 				con.rollback();
 			}
-			
 			logger.error(e.getMessage());
 			throw e;		
 
+			//Bloque finally, que se ejecuta siempre
+			//Cierre de todos los recursos
 		} finally {
 			if(stDonante != null) {
 				stDonante.close();
