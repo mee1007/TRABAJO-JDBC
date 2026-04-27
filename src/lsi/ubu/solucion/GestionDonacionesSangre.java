@@ -82,18 +82,73 @@ public class GestionDonacionesSangre {
 			
 			}
 			
+			//Comprobar que la ultima donacion ha sido hace mas de 15 dias
+			stUltimaDonacion = con.prepareStatement("select count * from donacion where nif_donante = ?" +
+					"and fecha_donacion > ? - 15");
+			stUltimaDonacion.setString(1, m_NIF);
+			stUltimaDonacion.setDate(2,  new java.sql.Date(m_Fecha_Donacion.getTime()));//Conversion de fecha a sql.date
+			rsUltimaDonacion = stUltimaDonacion.executeQuery();
+			rsUltimaDonacion.next();
+			
+			if(rsUltimaDonacion.getInt(1) > 0) { //Si ha donado en los ultimos 15 dias
+				throw new GestionDonacionesSangreException(GestionDonacionesSangreException.DONANTE_EXCEDE);
+			}
+			
+			//Insertar la donación
+			stInsertDonacion = con.prepareStatement("insert into donacion values (seq_donacion.nextval, ?, ?, ?)");
+			stInsertDonacion.setString(1, m_NIF);
+			stInsertDonacion.setFloat(2,  m_Cantidad);
+			stInsertDonacion.setDate(3,  new java.sql.Date(m_Fecha_Donacion.getTime()));
+			stInsertDonacion.executeUpdate();
+			
+			//Actualizar la reserva del hospital
+			stUpdateReserva = con.prepareStatement("update reserva_hospital set cantidad = cantidad + ? " +
+			"where id_hospital = ? and id_tipo_sangre = ?");
+			stUpdateReserva.setFloat(1,  m_Cantidad);
+			stUpdateReserva.setInt(2,  m_ID_Hospital);
+			stUpdateReserva.setInt(3,  idTipoSangre);
+			stUpdateReserva.executeUpdate();
+			
+			con.commit(); //Commit de los cambios si no ha habido excepciones
 			
 		} catch (SQLException e) {
-			//Completar por el alumno			
+			if (con != null) {
+				con.rollback();
+			}
 			
 			logger.error(e.getMessage());
 			throw e;		
 
 		} finally {
-			/*A rellenar por el alumno*/
-		}
-		
-		
+			if(stDonante != null) {
+				stDonante.close();
+			}
+			if(stHospital != null) {
+				stHospital.close();
+			}
+			if(stUltimaDonacion != null) {
+				stUltimaDonacion.close();
+			}
+			if(stInsertDonacion != null) {
+				stInsertDonacion.close();
+			}
+			if(stUpdateReserva != null) {
+				stUpdateReserva.close();
+			}
+			if(rsDonante != null) {
+				rsDonante.close();
+			}
+			if(rsHospital != null) {
+				rsHospital.close();
+			}			
+			if(rsUltimaDonacion != null) {
+				rsUltimaDonacion.close();
+			}
+			
+			if(con != null) {
+				con.close();
+			}
+		}	
 	}
 	
 	public static void anular_traspaso(int m_ID_Tipo_Sangre, int m_ID_Hospital_Origen,int m_ID_Hospital_Destino,
