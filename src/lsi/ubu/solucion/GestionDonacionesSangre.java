@@ -177,23 +177,115 @@ public class GestionDonacionesSangre {
 		
 		PoolDeConexiones pool = PoolDeConexiones.getInstance();
 		Connection con=null;
+		
 
+		PreparedStatement stSelectTraspasos = null;
+		PreparedStatement stUpdateOrigen = null;
+		PreparedStatement stUpdateDestino = null;
+		PreparedStatement stDeleteTraspasos = null;
+		ResultSet rsTraspasos = null;
 	
 		try{
 			con = pool.getConnection();
-			//Completar por el alumno
-			
+			//Buscamos todos los traspasos que coincidan con los parametros samos trunc para que no afecte la hora al comparar fechas
+			stSelectTraspasos = con.prepareStatement(
+		         "select id_traspaso, cantidad from traspaso " +
+		         "where id_tipo_sangre = ? " +
+		         "and id_hospital_origen = ? " +
+		         "and id_hospital_destino = ? " +
+		         "and trunc(fecha_traspaso) = trunc(?)");
+		     stSelectTraspasos.setInt(1, m_ID_Tipo_Sangre);
+		     stSelectTraspasos.setInt(2, m_ID_Hospital_Origen);
+		     stSelectTraspasos.setInt(3, m_ID_Hospital_Destino);
+		     stSelectTraspasos.setDate(4, new java.sql.Date(m_Fecha_Traspaso.getTime()));
+		     rsTraspasos = stSelectTraspasos.executeQuery();
+		        
+		   //Preparamos las sentencias para actualizar las reservas de ambos hospitales
+		     
+		     stUpdateOrigen = con.prepareStatement(
+		             "update reserva_hospital set cantidad = cantidad + ? " +
+		             "where id_hospital = ? and id_tipo_sangre = ?");
+		     
+		     stUpdateDestino = con.prepareStatement(
+		             "update reserva_hospital set cantidad = cantidad - ? " +
+		             "where id_hospital = ? and id_tipo_sangre = ?");
+		     
+		   //Recorremos los traspasos encontrados y actualizamos las reservas
+		     while (rsTraspasos.next()) {
+		        float cantidad = rsTraspasos.getFloat("cantidad");
+		        	
+		    //Si la cantidad es negativa lanzamos excepcion
+		        
+		            if (cantidad < 0) {
+		                throw new GestionDonacionesSangreException(
+		                    GestionDonacionesSangreException.VALOR_CANTIDAD_TRASPASO_INCORRECTO);
+		            }
+
+		    //El origen recupera la sangre que habia enviado
+		            
+		      stUpdateOrigen.setFloat(1, cantidad);
+		      stUpdateOrigen.setInt(2, m_ID_Hospital_Origen);
+		      stUpdateOrigen.setInt(3, m_ID_Tipo_Sangre);
+		      stUpdateOrigen.executeUpdate();
+
+		    //El destino devuelve la sangre que habia recibido
+		      stUpdateDestino.setFloat(1, cantidad);
+		      stUpdateDestino.setInt(2, m_ID_Hospital_Destino);
+		      stUpdateDestino.setInt(3, m_ID_Tipo_Sangre);
+		      stUpdateDestino.executeUpdate();
+		    }
+
+		     
+		   //Borramos los traspasos una vez actualizadas las reservas
+		        stDeleteTraspasos = con.prepareStatement(
+		            "delete from traspaso " +
+		            "where id_tipo_sangre = ? " +
+		            "and id_hospital_origen = ? " +
+		            "and id_hospital_destino = ? " +
+		            "and trunc(fecha_traspaso) = trunc(?)");
+		        stDeleteTraspasos.setInt(1, m_ID_Tipo_Sangre);
+		        stDeleteTraspasos.setInt(2, m_ID_Hospital_Origen);
+		        stDeleteTraspasos.setInt(3, m_ID_Hospital_Destino);
+		        stDeleteTraspasos.setDate(4, new java.sql.Date(m_Fecha_Traspaso.getTime()));
+		        stDeleteTraspasos.executeUpdate();
+
+		        con.commit();
+		        
+		} catch (GestionDonacionesSangreException e) {
+			if (con != null) {
+	            con.rollback();
+	        }
+	        throw e;
+	        
 		} catch (SQLException e) {
 			//Completar por el alumno			
-			
+			if (con != null) {
+	            con.rollback();
+	        }
 			logger.error(e.getMessage());
 			throw e;		
 
 		} finally {
-			/*A rellenar por el alumno*/
-		}		
+			if (stSelectTraspasos != null) {
+	            stSelectTraspasos.close();
+	        }
+	        if (stUpdateOrigen != null) {
+	            stUpdateOrigen.close();
+	        }
+	        if (stUpdateDestino != null) {
+	            stUpdateDestino.close();
+	        }
+	        if (stDeleteTraspasos != null) {
+	            stDeleteTraspasos.close();
+	        }
+	        if (rsTraspasos != null) {
+	            rsTraspasos.close();
+	        }
+	        if (con != null) {
+	            con.close();
+	        }
 	}
-	
+	}
 	public static void consulta_traspasos(String m_Tipo_Sangre)
 			throws SQLException {
 
@@ -230,7 +322,7 @@ public class GestionDonacionesSangre {
 		
 		CallableStatement cll_reinicia=null;
 		Connection conn = null;
-		
+	
 		try {
 			//Reinicio filas
 			conn = pool.getConnection();
@@ -242,54 +334,7 @@ public class GestionDonacionesSangre {
 			if (cll_reinicia!=null) cll_reinicia.close();
 			if (conn!=null) conn.close();
 		
-		}
-		
-		//Test realizar donacion
-		logger.info("Tests realizar_donacion");
-		tests_realizar_donacion();
-		
-	}
-	
-	
-	private static void tests_realizar_donacion() throws SQLException{
-		
-		PoolDeConexiones pool = PoolDeConexiones.getInstance();
-		Connection conn = null;
-		PreparedStatement st = null;
-		ResultSet rs = null;
-		
-		//Fecha del día en que se ejecutan las pruebas
-		Date hoy = new Date();
-		//Fecha de hace 5 dias para simular una donacion reciente
-		Date hace5dias = new Date(hoy.getTime() - 5L * 24 * 60 * 60 * 1000);
-		
-		//Caso1. Cantidad incorrecta: valor negativo
-		//Se espera la excepcion VALOR_CANTIDAD_DONACION_INCORRECTO
-		try {
-			GestionDonacionesSangre.realizar_donacion("12345678A", 1, -0.1f, hoy);
-			logger.info("Caso 1 mal: No lanza excepción con cantidad negativa");
-		} catch(GestionDonacionesSangreException e) {
-			if (e.getErrorCode() == GestionDonacionesSangreException.VALOR_CANTIDAD_DONACION_INCORRECTO) {
-				logger.info("Caso 1 ok. Detecta cantidad negativa correctamente");
-			} else {
-				logger.info("Caso 1 mal. Laza excepción incorrecta, código: " + e.getErrorCode());
-			}
-		}
-		
-		//Caso2. Cantidad incorrecta: Más del máximo de 0.45
-		//Se espera la excepción VALOR_CANTIDAD_DONACION_INCORRECTO
-		try {
-			GestionDonacionesSangre.realizar_donacion("12345678A", 1, 0.5f, hoy);
-			logger.info("Caso 2 mal: No lanza excepción con cantidad > 0.45");
-		} catch(GestionDonacionesSangreException e) {
-			if (e.getErrorCode() == GestionDonacionesSangreException.VALOR_CANTIDAD_DONACION_INCORRECTO) {
-				logger.info("Caso 2 ok. Detecta cantidad superior al máximo correctamente");
-			} else {
-				logger.info("Caso 2 mal: Lanza excepción incorrecta con código " + e.getErrorCode());
-				
-			}
-		}
-		
+		}			
 		
 	}
 }
