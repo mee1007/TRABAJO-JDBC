@@ -242,7 +242,54 @@ public class GestionDonacionesSangre {
 			if (cll_reinicia!=null) cll_reinicia.close();
 			if (conn!=null) conn.close();
 		
-		}			
+		}
+		
+		//Test realizar donacion
+		logger.info("Tests realizar_donacion");
+		tests_realizar_donacion();
+		
+	}
+	
+	
+	private static void tests_realizar_donacion() throws SQLException{
+		
+		PoolDeConexiones pool = PoolDeConexiones.getInstance();
+		Connection conn = null;
+		PreparedStatement st = null;
+		ResultSet rs = null;
+		
+		//Fecha del día en que se ejecutan las pruebas
+		Date hoy = new Date();
+		//Fecha de hace 5 dias para simular una donacion reciente
+		Date hace5dias = new Date(hoy.getTime() - 5L * 24 * 60 * 60 * 1000);
+		
+		//Caso1. Cantidad incorrecta: valor negativo
+		//Se espera la excepcion VALOR_CANTIDAD_DONACION_INCORRECTO
+		try {
+			GestionDonacionesSangre.realizar_donacion("12345678A", 1, -0.1f, hoy);
+			logger.info("Caso 1 mal: No lanza excepción con cantidad negativa");
+		} catch(GestionDonacionesSangreException e) {
+			if (e.getErrorCode() == GestionDonacionesSangreException.VALOR_CANTIDAD_DONACION_INCORRECTO) {
+				logger.info("Caso 1 ok. Detecta cantidad negativa correctamente");
+			} else {
+				logger.info("Caso 1 mal. Laza excepción incorrecta, código: " + e.getErrorCode());
+			}
+		}
+		
+		//Caso2. Cantidad incorrecta: Más del máximo de 0.45
+		//Se espera la excepción VALOR_CANTIDAD_DONACION_INCORRECTO
+		try {
+			GestionDonacionesSangre.realizar_donacion("12345678A", 1, 0.5f, hoy);
+			logger.info("Caso 2 mal: No lanza excepción con cantidad > 0.45");
+		} catch(GestionDonacionesSangreException e) {
+			if (e.getErrorCode() == GestionDonacionesSangreException.VALOR_CANTIDAD_DONACION_INCORRECTO) {
+				logger.info("Caso 2 ok. Detecta cantidad superior al máximo correctamente");
+			} else {
+				logger.info("Caso 2 mal: Lanza excepción incorrecta con código " + e.getErrorCode());
+				
+			}
+		}
+		
 		
 	}
 }
