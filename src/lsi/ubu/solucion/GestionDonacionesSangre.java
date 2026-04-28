@@ -126,8 +126,8 @@ public class GestionDonacionesSangre {
 		} catch (GestionDonacionesSangreException e) {
 			if (con != null) {
 				con.rollback();
-				throw e;
 			}
+			throw e;
 		
 			//Si salta excepción de SQL se revierten los cambios, se registra en el logger y se relanza
 		} catch (SQLException e) {
@@ -336,5 +336,143 @@ public class GestionDonacionesSangre {
 		
 		}			
 		
+		//Test realizar donacion
+		logger.info("Tests realizar_donacion");
+		tests_realizar_donacion();
+		
+	}
+	
+	
+	private static void tests_realizar_donacion() throws SQLException{
+		
+		PoolDeConexiones pool = PoolDeConexiones.getInstance();
+		Connection con = null;
+		PreparedStatement st = null;
+		ResultSet rs = null;
+		
+		//Fecha del día en que se ejecutan las pruebas
+		Date hoy = new Date();
+		//Fecha de hace 5 dias para simular una donacion reciente
+		Date hace10dias = new Date(hoy.getTime() - 10L * 24 * 60 * 60 * 1000);
+		
+		/*Caso1. Cantidad incorrecta: valor negativo
+		 * Se espera la excepcion VALOR_CANTIDAD_DONACION_INCORRECTO
+		 */
+		try {
+			GestionDonacionesSangre.realizar_donacion("12345678A", 1, -0.1f, hoy);
+			logger.info("Caso 1 mal: No lanza excepción con cantidad negativa");
+		} catch(GestionDonacionesSangreException e) {
+			if (e.getErrorCode() == GestionDonacionesSangreException.VALOR_CANTIDAD_DONACION_INCORRECTO) {
+				logger.info("Caso 1 ok. Detecta cantidad negativa correctamente");
+			} else {
+				logger.info("Caso 1 mal. Laza excepción incorrecta, código: " + e.getErrorCode());
+			}
+		}
+		
+		/*Caso2. Cantidad incorrecta: Más del máximo de 0.45
+		 * Se espera la excepción VALOR_CANTIDAD_DONACION_INCORRECTO
+		 */
+		try {
+			GestionDonacionesSangre.realizar_donacion("12345678A", 1, 0.5f, hoy);
+			logger.info("Caso 2 mal: No lanza excepción con cantidad > 0.45");
+		} catch(GestionDonacionesSangreException e) {
+			if (e.getErrorCode() == GestionDonacionesSangreException.VALOR_CANTIDAD_DONACION_INCORRECTO) {
+				logger.info("Caso 2 ok. Detecta cantidad superior al máximo correctamente");
+			} else {
+				logger.info("Caso 2 mal: Lanza excepción incorrecta con código " + e.getErrorCode());
+				
+			}
+		}
+		
+		/*Caso3. Donante inexistente
+		 * Se utiliza un NIF que no existe en la tabla de donantes
+		 * Se espera la excepción DONANTE_NO_EXISTE
+		 */
+		try {
+			GestionDonacionesSangre.realizar_donacion(
+				"00000000A", 1, 0.3f, hoy);
+			logger.info("Caso 3 mal: No se lanza excepción con donante inexistente");
+		} catch (GestionDonacionesSangreException e) {
+			if (e.getErrorCode() == GestionDonacionesSangreException.DONANTE_NO_EXISTE) {
+				logger.info("Caso 3 ok: Se detecta correctamente que el donante no existe");
+			} else {
+				logger.info("Caso 3 mal: Se lanza una excepcion incorrecta con código: "+ e.getErrorCode());
+			}
+		
+		}
+		
+		/*Caso4. Hospital no existe
+		 * Utiliza un donante válido pero un hospital que no existe
+		 * Se esoera que salte la excepción HOSPITAL_NO_EXISTE
+		 */
+		try {
+			GestionDonacionesSangre.realizar_donacion("12345678A", 1000, 0.3f, hoy);
+			logger.info("Caso 4 mal: No lanza excepción con hospital inexistente");
+		} catch (GestionDonacionesSangreException e) {
+			if (e.getErrorCode() ==	GestionDonacionesSangreException.HOSPITAL_NO_EXISTE) {
+				logger.info("Caso 4 ok: Se detecta hospital inexistente correctamente");
+			} else {
+				logger.info("Caso 4 mal: LAnza excepcion incorrecta, con código: "+ e.getErrorCode());
+			}
+		}
+		
+		/*Caso 5: Donante que ha donado hace menos de 15 dias
+		 * El donante con DNI 12345678A tiene donaciones el 10/01 y 15/01
+		 * usamos hace10dias para simular que intenta donar demasiado pronto
+		 * Se espera la excepción DONANTE_EXCEDE
+		 */
+		try {
+			GestionDonacionesSangre.realizar_donacion("12345678A", 1, 0.3f, hace10dias);
+			logger.info("Caso 5 mal: No lanza excepción con donación hace menos de 15 días");
+		} catch (GestionDonacionesSangreException e) {
+			if (e.getErrorCode() == GestionDonacionesSangreException.DONANTE_EXCEDE) {
+				logger.info("Caso 5 ok: Detecta donacion de hace menos de 15 dias correctamente");
+			} else {
+				logger.info("Caso 5 mal: Se lanza una excepción incorrecta con código: "+ e.getErrorCode());
+			}
+		}
+
+		/*Caso 6: Donación correcta
+		 * Donante 98989898C (tipo O) en el hospital 1 que tiene reserva de tipo O
+		 * Comprobamos que se inserta la donación y se actualiza la reserva del hospital sumando
+		 * la cantidad donada a la reserva existente
+		*/
+		try {
+			// Guardamos la reserva actual antes de donar
+			con = pool.getConnection();
+			st = con.prepareStatement("select cantidad from reserva_hospital where id_hospital = 1 and id_tipo_sangre = "+
+				"(select id_tipo_sangre from donante where nif = '98989898C')");
+			rs = st.executeQuery();
+			rs.next();
+			float reservaAntes = rs.getFloat("cantidad");
+			rs.close();
+			st.close();
+			con.close();
+
+			//Realizamos la donacion
+			GestionDonacionesSangre.realizar_donacion("98989898C", 1, 0.3f, hoy);
+
+			// Comprobamos que la reserva ha aumentado 0.3
+			con = pool.getConnection();
+			st = con.prepareStatement("select cantidad from reserva_hospital where id_hospital = 1 and id_tipo_sangre = " +
+				"(select id_tipo_sangre from donante where nif = '98989898C')");
+			rs = st.executeQuery();
+			rs.next();
+			float reservaDespues = rs.getFloat("cantidad");
+
+			//Comprobamos si se ha actualizado bien la cantidad en resserva
+			if (Math.abs((reservaDespues - reservaAntes) - 0.3f) < 0.001f) { //Tenemos en cuenta el posible margen de error de float
+				logger.info("Caso 6 ok: Donación correcta");
+			} else {
+				logger.info("Caso 6 mal: La reserva no se ha actualizado correctamente");
+			}
+
+		} catch (GestionDonacionesSangreException e) {
+			logger.info("Caso 6 mal: Se lanza excepcion inesperada, codigo: "+ e.getErrorCode());
+		} finally {
+			if (rs != null) rs.close();
+			if (st != null) st.close();
+			if (con != null) con.close();
+		}
 	}
 }
