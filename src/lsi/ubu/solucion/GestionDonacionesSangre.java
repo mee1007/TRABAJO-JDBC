@@ -411,10 +411,15 @@ public class GestionDonacionesSangre {
 		//Test realizar donacion
 		logger.info("Tests realizar_donacion");
 		tests_realizar_donacion();
+		
+		//TEst anular traspaso
+		logger.info("Tests anular_traspaso");
+		tests_anular_traspaso();
 
 		// Test consulta_traspasos
 		logger.info("Tests consulta_traspasos");
 		tests_consulta_traspasos();
+		
 	}
 	
 	
@@ -550,7 +555,127 @@ public class GestionDonacionesSangre {
 			if (con != null) con.close();
 		}
 	}
+	
+	/**
+	 * Tests para anular_traspaso.
+	 * Comprobamos los casos de traspaso correcto, traspaso inexistente
+	 * y fecha sin traspasos registrados.
+	 */
+	
+	private static void tests_anular_traspaso() throws SQLException {
 
+	    PoolDeConexiones pool = PoolDeConexiones.getInstance();
+	    Connection con = null;
+	    PreparedStatement st = null;
+	    ResultSet rs = null;
+
+	    java.sql.Date fechaTraspaso = java.sql.Date.valueOf("2025-01-11");
+	    java.sql.Date fechaTraspaso2 = java.sql.Date.valueOf("2025-01-16");
+
+	    /*Caso 1: Anular traspaso correcto
+	     * Tipo sangre 1, origen hospital 1, destino hospital 2, fecha 11/01/2025
+	     * Comprobamos que las reservas se actualizan correctamente
+	     */
+	    try {
+	        con = pool.getConnection();
+	        st = con.prepareStatement(
+	            "select cantidad from reserva_hospital " +
+	            "where id_hospital = 1 and id_tipo_sangre = 1");
+	        rs = st.executeQuery();
+	        rs.next();
+	        float reservaOrigenAntes = rs.getFloat("cantidad");
+	        rs.close();
+	        st.close();
+
+	        st = con.prepareStatement(
+	            "select cantidad from reserva_hospital " +
+	            "where id_hospital = 2 and id_tipo_sangre = 1");
+	        rs = st.executeQuery();
+	        rs.next();
+	        float reservaDestinoAntes = rs.getFloat("cantidad");
+	        rs.close();
+	        st.close();
+	        con.close();
+
+	        GestionDonacionesSangre.anular_traspaso(1, 1, 2, fechaTraspaso);
+
+	        con = pool.getConnection();
+	        st = con.prepareStatement(
+	            "select cantidad from reserva_hospital " +
+	            "where id_hospital = 1 and id_tipo_sangre = 1");
+	        rs = st.executeQuery();
+	        rs.next();
+	        float reservaOrigenDespues = rs.getFloat("cantidad");
+	        rs.close();
+	        st.close();
+
+	        st = con.prepareStatement(
+	            "select cantidad from reserva_hospital " +
+	            "where id_hospital = 2 and id_tipo_sangre = 1");
+	        rs = st.executeQuery();
+	        rs.next();
+	        float reservaDestinoDespues = rs.getFloat("cantidad");
+
+	        if (reservaOrigenDespues > reservaOrigenAntes &&
+	                reservaDestinoDespues < reservaDestinoAntes) {
+	            logger.info("Caso 1 ok: Traspaso anulado y reservas actualizadas correctamente");
+	        } else {
+	            logger.info("Caso 1 mal: Las reservas no se actualizaron correctamente");
+	        }
+
+	    } catch (GestionDonacionesSangreException e) {
+	        logger.info("Caso 1 mal: Lanza excepcion inesperada, codigo: " + e.getErrorCode());
+	    } finally {
+	        if (rs != null) rs.close();
+	        if (st != null) st.close();
+	        if (con != null) con.close();
+	    }
+
+	    /*Caso 2: Anular traspaso que no existe
+	     * Usamos parametros que no corresponden a ningun traspaso
+	     * No debe lanzar excepcion pero tampoco modificar nada
+	     */
+	    try {
+	        GestionDonacionesSangre.anular_traspaso(99, 99, 99, fechaTraspaso);
+	        logger.info("Caso 2 ok: Anular traspaso inexistente no lanza excepcion");
+	    } catch (GestionDonacionesSangreException e) {
+	        logger.info("Caso 2 mal: Lanza excepcion inesperada, codigo: " + e.getErrorCode());
+	    }
+
+	    /*Caso 3: Anular traspaso de tipo sangre 2, origen hospital 1, destino hospital 2
+	     * Existe en los datos de prueba con fecha 11/01/2025
+	     */
+	    try {
+	        GestionDonacionesSangre.anular_traspaso(2, 1, 2, fechaTraspaso);
+	        logger.info("Caso 3 ok: Traspaso de tipo sangre 2 anulado correctamente");
+	    } catch (GestionDonacionesSangreException e) {
+	        logger.info("Caso 3 mal: Lanza excepcion inesperada, codigo: " + e.getErrorCode());
+	    }
+
+	    /*Caso 4: Fecha que no coincide con ningun traspaso
+	     * No debe lanzar excepcion pero tampoco modificar nada
+	     */
+	    try {
+	        GestionDonacionesSangre.anular_traspaso(1, 1, 2,
+	            java.sql.Date.valueOf("2024-01-01"));
+	        logger.info("Caso 4 ok: Fecha sin traspasos no lanza excepcion");
+	    } catch (GestionDonacionesSangreException e) {
+	        logger.info("Caso 4 mal: Lanza excepcion inesperada, codigo: " + e.getErrorCode());
+	    }
+
+	    /*Caso 5: Anular traspaso origen hospital 3, destino hospital 2, fecha 16/01/2025
+	     * Existe en los datos de prueba con cantidad 10
+	     */
+	    try {
+	        GestionDonacionesSangre.anular_traspaso(2, 3, 2, fechaTraspaso2);
+	        logger.info("Caso 5 ok: Traspaso del 16/01 anulado correctamente");
+	    } catch (GestionDonacionesSangreException e) {
+	        logger.info("Caso 5 mal: Lanza excepcion inesperada, codigo: " + e.getErrorCode());
+	    }
+	}
+	
+	
+	
 	/**
 	 * Tests para consulta_traspasos.
 	 * Comprobamos los casos de tipo de sangre inexistente y tipo de sangre con traspasos.
