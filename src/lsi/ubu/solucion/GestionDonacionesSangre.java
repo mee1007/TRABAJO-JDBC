@@ -286,27 +286,99 @@ public class GestionDonacionesSangre {
 	        }
 	}
 	}
+
+	/**
+	 * consulta_traspasos:
+	 * Muestra por logger todos los traspasos de un tipo de sangre concreto.
+	 * Para cada traspaso imprime: hospital origen, hospital destino, cantidad y fecha.
+	 * Si el tipo de sangre no existe lanza TIPO_SANGRE_NO_EXISTE.
+	 */
 	public static void consulta_traspasos(String m_Tipo_Sangre)
 			throws SQLException {
 
-				
 		PoolDeConexiones pool = PoolDeConexiones.getInstance();
-		Connection con=null;
+		Connection con = null;
 
-	
-		try{
+		PreparedStatement stTipoSangre = null; // Buscar el tipo de sangre por descripción
+		PreparedStatement stTraspasos = null;  // Consultar traspasos de ese tipo de sangre
+		ResultSet rsTipoSangre = null;
+		ResultSet rsTraspasos = null;
+
+		try {
 			con = pool.getConnection();
-			//Completar por el alumno
-			
+
+			// Buscamos el id del tipo de sangre a partir de su descripción
+			stTipoSangre = con.prepareStatement(
+				"select id_tipo_sangre from tipo_sangre where descripcion = ?");
+			stTipoSangre.setString(1, m_Tipo_Sangre);
+			rsTipoSangre = stTipoSangre.executeQuery();
+
+			// Si no existe el tipo de sangre, lanzamos excepción
+			if (!rsTipoSangre.next()) {
+				throw new GestionDonacionesSangreException(
+					GestionDonacionesSangreException.TIPO_SANGRE_NO_EXISTE);
+			}
+
+			int idTipoSangre = rsTipoSangre.getInt("id_tipo_sangre");
+
+			// Consultamos todos los traspasos del tipo de sangre dado,
+			// haciendo join con hospital para obtener los nombres de origen y destino
+			stTraspasos = con.prepareStatement(
+				"select ho.nombre as hospital_origen, " +
+				"       hd.nombre as hospital_destino, " +
+				"       t.cantidad, " +
+				"       t.fecha_traspaso " +
+				"from traspaso t " +
+				"join hospital ho on t.id_hospital_origen  = ho.id_hospital " +
+				"join hospital hd on t.id_hospital_destino = hd.id_hospital " +
+				"where t.id_tipo_sangre = ? " +
+				"order by t.fecha_traspaso");
+			stTraspasos.setInt(1, idTipoSangre);
+			rsTraspasos = stTraspasos.executeQuery();
+
+			// Recorremos e imprimimos cada traspaso encontrado
+			logger.info("Traspasos del tipo de sangre: " + m_Tipo_Sangre);
+			boolean hayTraspasos = false;
+			while (rsTraspasos.next()) {
+				hayTraspasos = true;
+				String origen   = rsTraspasos.getString("hospital_origen");
+				String destino  = rsTraspasos.getString("hospital_destino");
+				float cantidad  = rsTraspasos.getFloat("cantidad");
+				java.sql.Date fecha = rsTraspasos.getDate("fecha_traspaso");
+				logger.info("  Origen: " + origen +
+							" | Destino: " + destino +
+							" | Cantidad: " + cantidad +
+							" | Fecha: " + fecha);
+			}
+
+			// Si no hay traspasos para ese tipo, lo indicamos
+			if (!hayTraspasos) {
+				logger.info("  No hay traspasos registrados para este tipo de sangre.");
+			}
+
+		} catch (GestionDonacionesSangreException e) {
+			// Error de negocio: tipo de sangre no existe
+			if (con != null) {
+				con.rollback();
+			}
+			throw e;
+
 		} catch (SQLException e) {
-			//Completar por el alumno			
-			
+			// Error de base de datos: rollback, log y relanzar
+			if (con != null) {
+				con.rollback();
+			}
 			logger.error(e.getMessage());
-			throw e;		
+			throw e;
 
 		} finally {
-			/*A rellenar por el alumno*/
-		}		
+			// Cerramos todos los recursos en el finally
+			if (rsTipoSangre != null) rsTipoSangre.close();
+			if (rsTraspasos  != null) rsTraspasos.close();
+			if (stTipoSangre != null) stTipoSangre.close();
+			if (stTraspasos  != null) stTraspasos.close();
+			if (con != null) con.close();
+		}
 	}
 	
 	static public void creaTablas() {
@@ -339,7 +411,10 @@ public class GestionDonacionesSangre {
 		//Test realizar donacion
 		logger.info("Tests realizar_donacion");
 		tests_realizar_donacion();
-		
+
+		// Test consulta_traspasos
+		logger.info("Tests consulta_traspasos");
+		tests_consulta_traspasos();
 	}
 	
 	
@@ -473,6 +548,80 @@ public class GestionDonacionesSangre {
 			if (rs != null) rs.close();
 			if (st != null) st.close();
 			if (con != null) con.close();
+		}
+	}
+
+	/**
+	 * Tests para consulta_traspasos.
+	 * Comprobamos los casos de tipo de sangre inexistente y tipo de sangre con traspasos.
+	 */
+	private static void tests_consulta_traspasos() throws SQLException {
+
+		PoolDeConexiones pool = PoolDeConexiones.getInstance();
+		Connection conn = null;
+		CallableStatement cll_reinicia = null;
+
+		// Reiniciamos los datos antes de cada bloque de tests
+		try {
+			conn = pool.getConnection();
+			cll_reinicia = conn.prepareCall("{call inicializa_test}");
+			cll_reinicia.execute();
+		} catch (SQLException e) {
+			logger.error(e.getMessage());
+		} finally {
+			if (cll_reinicia != null) cll_reinicia.close();
+			if (conn != null) conn.close();
+		}
+
+		/*Caso 1: Tipo de sangre que no existe en la BD
+		 * Se espera la excepción TIPO_SANGRE_NO_EXISTE
+		 */
+		try {
+			GestionDonacionesSangre.consulta_traspasos("Tipo X.");
+			logger.info("CT Caso 1 mal: No lanza excepción con tipo de sangre inexistente");
+		} catch (GestionDonacionesSangreException e) {
+			if (e.getErrorCode() == GestionDonacionesSangreException.TIPO_SANGRE_NO_EXISTE) {
+				logger.info("CT Caso 1 ok: Detecta correctamente tipo de sangre inexistente");
+			} else {
+				logger.info("CT Caso 1 mal: Lanza excepción incorrecta, código: " + e.getErrorCode());
+			}
+		}
+
+		/*Caso 2: Tipo de sangre que existe y tiene traspasos (Tipo A.)
+		 * Según inicializa_test, hay dos traspasos de tipo A (id=1):
+		 *   - Hospital 1 -> Hospital 2, cantidad 2, fecha 11/01/2025
+		 *   - Hospital 2 -> Hospital 3, cantidad 1.2, fecha 16/01/2025
+		 * Se espera que se muestren esos dos traspasos sin lanzar excepción
+		 */
+		try {
+			GestionDonacionesSangre.consulta_traspasos("Tipo A.");
+			logger.info("CT Caso 2 ok: consulta_traspasos ejecutada sin excepción para Tipo A.");
+		} catch (GestionDonacionesSangreException e) {
+			logger.info("CT Caso 2 mal: Lanza excepción inesperada, código: " + e.getErrorCode());
+		}
+
+		/*Caso 3: Tipo de sangre que existe pero NO tiene traspasos (Tipo O.)
+		 * Según inicializa_test no hay traspasos de tipo O
+		 * Se espera que se ejecute sin excepción y sin mostrar traspasos
+		 */
+		try {
+			GestionDonacionesSangre.consulta_traspasos("Tipo O.");
+			logger.info("CT Caso 3 ok: consulta_traspasos ejecutada sin excepción para Tipo O. (sin traspasos)");
+		} catch (GestionDonacionesSangreException e) {
+			logger.info("CT Caso 3 mal: Lanza excepción inesperada, código: " + e.getErrorCode());
+		}
+
+		/*Caso 4: Tipo de sangre que existe y tiene varios traspasos (Tipo B.)
+		 * Según inicializa_test, hay dos traspasos de tipo B (id=2):
+		 *   - Hospital 1 -> Hospital 2, cantidad 3, fecha 11/01/2025
+		 *   - Hospital 3 -> Hospital 2, cantidad 10, fecha 16/01/2025
+		 * Se espera que se muestren esos dos traspasos sin lanzar excepción
+		 */
+		try {
+			GestionDonacionesSangre.consulta_traspasos("Tipo B.");
+			logger.info("CT Caso 4 ok: consulta_traspasos ejecutada sin excepción para Tipo B.");
+		} catch (GestionDonacionesSangreException e) {
+			logger.info("CT Caso 4 mal: Lanza excepción inesperada, código: " + e.getErrorCode());
 		}
 	}
 }
